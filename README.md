@@ -1,2 +1,2 @@
 # Algorithm
-The code for the homework of the Algorithm Design and Analysis course
+The file for the homework of the Algorithm Design and Analysis course
