@@ -159,8 +159,8 @@ if __name__ == "__main__":
     parser.add_argument('--d_net_name', type=str, default="d_net")
     # parser.add_argument('--enhan_images_path', type=str, default="../target/")
     # parser.add_argument('--ori_images_path', type=str, default="../input/")
-    parser.add_argument('--enhan_images_path', type=str, default="D:/PHD/UIEB/base/UIEB/train/target/")
-    parser.add_argument('--ori_images_path', type=str, default="D:/PHD/UIEB/base/UIEB/train/input/")
+    parser.add_argument('--enhan_images_path', type=str, default="./dataset/UIEB/train/target/")
+    parser.add_argument('--ori_images_path', type=str, default="./dataset/UIEB/train/input/")
 
     parser.add_argument('--lr', type=float, default=2e-4)
     parser.add_argument('--grad_clip_norm', type=float, default=0.1)

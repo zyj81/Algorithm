@@ -31,10 +31,6 @@ UCIQE=[]
 
 for i in range(len(target)):
 
-    print(i)
-    UIQM.append(getUIQM(NormalizeData(generated[i])))
-    UCIQE.append(getUCIQE(NormalizeData(generated[i])))
-
     PSNR = peak_signal_noise_ratio(NormalizeData(generated[i]), NormalizeData(target[i]))
     PSNR_results.append(PSNR)
 
