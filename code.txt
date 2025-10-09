@@ -1,0 +1,96 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class TransmissionResnetBlock(nn.Module):
+    """
+    物理感知残差块 (Transmission-Aware Residual Block)
+    通过传输图 T(x) 和反传输图 1 - T(x) 对残差进行 FiLM 调制。
+    """
+    def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias):
+        super(TransmissionResnetBlock, self).__init__()
+
+        # ---- 原 ResnetBlock 的 conv_block ----
+        conv_block = []
+        p = 0
+        if padding_type == 'reflect':
+            conv_block += [nn.ReflectionPad2d(1)]
+        elif padding_type == 'replicate':
+            conv_block += [nn.ReplicationPad2d(1)]
+        elif padding_type == 'zero':
+            p = 1
+        else:
+            raise NotImplementedError(f'padding [{padding_type}] not implemented')
+
+        conv_block += [
+            nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
+            norm_layer(dim),
+            nn.ReLU(True)
+        ]
+
+        if use_dropout:
+            conv_block += [nn.Dropout(0.5)]
+
+        p = 0
+        if padding_type == 'reflect':
+            conv_block += [nn.ReflectionPad2d(1)]
+        elif padding_type == 'replicate':
+            conv_block += [nn.ReplicationPad2d(1)]
+        elif padding_type == 'zero':
+            p = 1
+
+        conv_block += [
+            nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
+            norm_layer(dim)
+        ]
+
+        self.conv_block = nn.Sequential(*conv_block)
+
+        # ---- 传输图调制分支 ----
+        self.scale_proj_T = nn.Conv2d(1, dim, kernel_size=1)
+        self.shift_proj_T = nn.Conv2d(1, dim, kernel_size=1)
+        self.scale_proj_invT = nn.Conv2d(1, dim, kernel_size=1)
+        self.shift_proj_invT = nn.Conv2d(1, dim, kernel_size=1)
+
+        # 可学习平衡参数
+        self.alpha = nn.Parameter(torch.tensor(1.0))  # invT 权重
+        self.beta = nn.Parameter(torch.tensor(1.0))   # T 权重
+
+        # 初始化为“恒等映射”（不影响初期训练）
+        for m in [self.scale_proj_T, self.shift_proj_T,
+                  self.scale_proj_invT, self.shift_proj_invT]:
+            nn.init.constant_(m.weight, 0.0)
+            nn.init.constant_(m.bias, 0.0)
+
+    def forward(self, x, T_map, invT_map):
+        """
+        x: [B, C, H, W]
+        T_map: [B, 1, H0, W0]
+        invT_map: [B, 1, H0, W0]
+        """
+        s
+        res = self.conv_block(x)
+
+        
+        if T_map.shape[2:] != x.shape[2:]:
+            T_map = F.interpolate(T_map, size=x.shape[2:], mode='bilinear', align_corners=False)
+        if invT_map.shape[2:] != x.shape[2:]:
+            invT_map = F.interpolate(invT_map, size=x.shape[2:], mode='bilinear', align_corners=False)
+
+        
+        scale_T = self.scale_proj_T(T_map)
+        shift_T = self.shift_proj_T(T_map)
+        scale_inv = self.scale_proj_invT(invT_map)
+        shift_inv = self.shift_proj_invT(invT_map)
+
+        
+        combined_scale = self.beta * scale_T + self.alpha * scale_inv
+        combined_shift = self.beta * shift_T + self.alpha * shift_inv
+
+        # FiLM 调制：s = 1 + scale, b = shift
+        s = 1 + combined_scale
+        b = combined_shift
+
+        
+        out = x + s * res + b
+        return out
