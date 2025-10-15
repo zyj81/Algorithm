@@ -1,77 +1,79 @@
 class TransmissionResnetBlock(nn.Module):
     """
-    传输感知残差块 (Transmission-Aware Residual Block)
-    在标准 ResNet 残差结构中引入 T(x) 和 (1 - T(x)) 调制。
-    """
-    def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias, alpha=1.0, beta=1.0):
-        super(TransmissionResnetBlock, self).__init__()
-        self.conv_block = self.build_conv_block(dim, padding_type, norm_layer, use_dropout, use_bias)
-        self.alpha = alpha  # T(x) 权重
-        self.beta = beta    # (1 - T(x)) 权重
+    Transmission-aware Residual Block
+    在标准残差块中引入 T(x) 与 1−T(x) 的调制机制。
 
-    def build_conv_block(self, dim, padding_type, norm_layer, use_dropout, use_bias):
-        conv_block = []
+    Args:
+        dim (int): 通道数
+        padding_type (str): 填充类型
+        norm_layer (nn.Module): 归一化层
+        use_dropout (bool): 是否使用dropout
+        use_bias (bool): 卷积是否使用bias
+    """
+
+    def __init__(self, dim, padding_type='reflect', norm_layer=nn.InstanceNorm2d,
+                 use_dropout=False, use_bias=False):
+        super(TransmissionResnetBlock, self).__init__()
+
         p = 0
         if padding_type == 'reflect':
-            conv_block += [nn.ReflectionPad2d(1)]
+            self.pad = nn.ReflectionPad2d(1)
         elif padding_type == 'replicate':
-            conv_block += [nn.ReplicationPad2d(1)]
+            self.pad = nn.ReplicationPad2d(1)
         elif padding_type == 'zero':
             p = 1
+            self.pad = None
+        else:
+            raise NotImplementedError(f'Padding type [{padding_type}] not implemented')
+
+        # 核心卷积模块
+        conv_block = []
+        if self.pad is not None:
+            conv_block += [self.pad]
         conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
                        norm_layer(dim),
                        nn.ReLU(True)]
+
         if use_dropout:
             conv_block += [nn.Dropout(0.5)]
-        # 第二层
-        p = 0
-        if padding_type == 'reflect':
-            conv_block += [nn.ReflectionPad2d(1)]
-        elif padding_type == 'replicate':
-            conv_block += [nn.ReplicationPad2d(1)]
-        elif padding_type == 'zero':
-            p = 1
+
+        if self.pad is not None:
+            conv_block += [self.pad]
         conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias),
                        norm_layer(dim)]
-        return nn.Sequential(*conv_block)
 
-    def forward(self, x, T_feature, invT_feature):
+        self.conv_block = nn.Sequential(*conv_block)
+
+        # 调制系数
+        self.alpha = nn.Parameter(torch.tensor(0.1))  # 控制 T(x) 权重
+        self.beta = nn.Parameter(torch.tensor(0.1))   # 控制 (1 - T(x)) 权重
+
+    def forward(self, x, T_feature=None, invT_feature=None):
         """
-        x: 输入特征 [B, C, H, W]
-        T_feature: 传输特征 [B, C, H, W]
-        invT_feature: 反传输特征 [B, C, H, W]
+        Args:
+            x: 当前特征 [B, C, H, W]
+            T_feature: 传输特征 T(x) [B, C, H, W]
+            invT_feature: 反传输特征 (1 - T(x)) [B, C, H, W]
+        Returns:
+            输出特征 [B, C, H, W]
         """
-        # 调整传输特征尺寸匹配残差特征
+        out = self.conv_block(x)
+
+        # 如果没有传入 T(x)，直接走普通残差路径
+        if T_feature is None or invT_feature is None:
+            return x + out
+
+        # 调整传输特征尺寸以匹配输入特征
         if T_feature.shape[2:] != x.shape[2:]:
             T_feature = F.interpolate(T_feature, size=x.shape[2:], mode='bilinear', align_corners=False)
+        if invT_feature.shape[2:] != x.shape[2:]:
             invT_feature = F.interpolate(invT_feature, size=x.shape[2:], mode='bilinear', align_corners=False)
 
-        out = self.conv_block(x)
-        # 调制：强化高传输区域，补偿低传输区域
+        # Step 1: 调制逻辑
+        # T(x) → 强化高透射区域（细节清晰）
+        # 1 - T(x) → 加强低透射区域（颜色修复）
         modulated = out * (1 + self.alpha * T_feature) - self.beta * invT_feature
-        return x + modulated
 
-# Residual Module
-blocks = []
-mult = 2 ** n_down
-for i in range(n_blocks_res):
-    blocks.append(
-        TransmissionResnetBlock(
-            ngf * mult,
-            padding_type=padding_type,
-            norm_layer=norm_layer,
-            use_dropout=use_dropout,
-            use_bias=use_bias
-        )
-    )
-self.rfrm = nn.ModuleList(blocks)
-
-T_feature, invT_feature = self.trans_estimation(input)  # 从 transmission.py 估计
-
-out = self.wrpm(input)
-out = out * T_feature  # step1融合，可保留
-out = self.dm(out)
-
-# Step 2: Residual Block 调制
-for res_block in self.rfrm:
-    out = res_block(out, T_feature, invT_feature)
+        # Step 2: 残差叠加
+        out = x + modulated
+        return out
